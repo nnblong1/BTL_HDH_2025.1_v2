@@ -1,0 +1,198 @@
+/dts-v1/;
+/plugin/;
+
+// #include "dt-bindings/interrupt-controller/arm-gic.h"
+// #include "dt-bindings/interrupt-controller/irq.h"
+// #include "dt-bindings/clock/bcm2835.h"
+
+/ {
+ compatible = "brcm,bcm2711";
+
+    fragment@0 {
+		target = <&csi1>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+	
+	/*
+	 * Fragment 1: Ensure I2C bus is enabled for sensor communication
+	 * IMX219 sensor communicates via I2C
+	 */
+	fragment@1 {
+		target = <&i2c0>;
+		__overlay__ {
+			status = "okay";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			
+			/* 
+			 * Note: The I2C client for IMX219 is created programmatically
+			 * in the driver, so we don't define it here
+			 */
+		};
+	};
+	
+	/*
+	 * Fragment 2: Enable I2C10 (camera I2C bus on some configurations)
+	 */
+	fragment@2 {
+		target = <&i2c_csi_dsi>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+	
+	/*
+	 * Fragment 3: Define our custom Unicam device node
+	 * This registers the hardware resources for our driver
+	 */
+	fragment@3 {
+		target-path = "/soc";
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			
+			manual_unicam: manual_unicam@7e801000 {
+				compatible = "vendor,manual-unicam";
+				
+				/*
+				 * Register mapping
+				 * Legacy address 0x7e801000 is automatically
+				 * mapped to physical 0xfe801000 by kernel
+				 */
+				reg = <0x7e801000 0x1000>;
+				
+				/*
+				 * Interrupt configuration
+				 * GIC_SPI 103 = Unicam 1 (CSI1) interrupt
+				 * IRQ_TYPE_LEVEL_HIGH for GIC-400 compatibility
+				 */
+				interrupts = <0 103 4>;
+				interrupt-names = "unicam";
+				
+				/*
+				 * Clock references
+				 * - lp: Low power/peripheral clock for Unicam
+				 * - vpu: VideoCore clock (must be >= 250MHz for CSI-2)
+				 */
+				clocks = <&clocks 29>,
+					 <&firmware_clocks 4>;
+				clock-names = "lp", "vpu";
+				avdd-supply = <&cam1_reg>;
+				/*
+				 * I2C bus reference for sensor
+				 * Points to I2C bus connected to camera
+				 */
+				i2c-bus = <&i2c_csi_dsi>;
+				
+				/*
+				 * Power domain (if needed)
+				 */
+				// power-domains = <&power RPI_POWER_DOMAIN_UNICAM1>;
+				
+				/*
+				 * DMA configuration
+				 * Tells kernel this device can do DMA
+				 */
+				dma-coherent;
+				
+				status = "okay";
+			};
+		};
+	};
+	
+	/*
+	 * Fragment 4: Configure CMA (Contiguous Memory Allocator)
+	 * Ensure sufficient CMA memory is available for DMA buffer
+	 */
+	fragment@4 {
+		target-path = "/";
+		__overlay__ {
+			/*
+			 * Reserve CMA region for video capture
+			 * Size should match or exceed DMA_BUFFER_SIZE in driver
+			 */
+			reserved-memory {
+				#address-cells = <1>;
+				#size-cells = <1>;
+				// ranges;
+				
+				cma_region: cma_region {
+					compatible = "shared-dma-pool";
+					size = <0x4000000>; /* 64MB */
+					alignment = <0x100000>; /* 1MB aligned */
+					reusable;
+					linux,cma-default;
+				};
+			};
+		};
+	};
+	
+	/*
+	 * Fragment 5: Configure CSI-2 D-PHY settings
+	 * Settings for 2-lane MIPI CSI-2 operation
+	 */
+	fragment@5 {
+		target = <&csi1>;
+		__overlay__ {
+			/* Even though disabled, configure D-PHY for reference */
+			brcm,num-data-lanes = <2>;
+		};
+	};
+	
+	/*
+	 * Fragment 6: GPIO configuration for camera control pins
+	 * (if needed for sensor power/reset control)
+	 */
+	fragment@6 {
+		target = <&gpio>;
+		__overlay__ {
+			camera_pins: camera_pins {
+				brcm,pins = <44 45>; /* CAM_GPIO0, CAM_GPIO1 */
+				brcm,function = <1>; /* Output */
+				brcm,pull = <0>;     /* No pull */
+			};
+		};
+	};
+	
+	/*
+	 * Fragment 7: Set higher CMA size via command line
+	 * This is a param overlay to modify kernel command line
+	 */
+	fragment@7 {
+		target-path = "/chosen";
+		__overlay__ {
+			bootargs = "cma=64M";
+		};
+	};
+	/*
+	 * Fragment 8: Define fixed clock for camera XCLK
+	 * Many sensors require a specific external clock frequency
+	 */
+	fragment@8 {
+        target-path = "/";
+        __overlay__ {
+            cam1_clk: cam1_clk {
+                compatible = "fixed-clock";
+                #clock-cells = <0>;
+                clock-frequency = <24000000>;  // 24MHz for IMX219
+            };
+        };
+    };
+	fragmant@9 {
+		target = <&cam1_reg>;
+		__overlay__ {
+			xclk = <&cam1_clk>;
+			xclk-names = "xclk";
+		};
+	};
+	/*
+	 * Parameters that can be set when loading overlay
+	 * Example: dtoverlay=manual-unicam,buffer_size=32
+	 */
+	__overrides__ {
+		buffer_size = <&cma_region>,"size:0";
+		i2c_bus = <&manual_unicam>,"i2c-bus:0";
+	};
+};
