@@ -101,7 +101,7 @@ touch Makefile
 
 ```bash
 # Build tất cả
-make
+make -C ~/linux ARCH=arm64 M=$PWD modules
 
 # Output mong đợi:
 # - manual-unicam.ko (kernel module)
@@ -112,7 +112,7 @@ make
 
 ```bash
 # Xem thông tin module
-modinfo manual-unicam.ko
+modinfo manual-unicam-driver.ko
 
 # Kết quả hiển thị:
 # - filename
@@ -132,18 +132,14 @@ modinfo manual-unicam.ko
 # Sử dụng Makefile
 sudo make install
 
-# Hoặc cài đặt thủ công:
-sudo cp manual-unicam.ko /lib/modules/$(uname -r)/kernel/drivers/media/platform/
-sudo cp manual-unicam.dtbo /boot/overlays/
-sudo depmod -a
 ```
 
 ### 2. Cấu hình boot
 
-Chỉnh sửa `/boot/config.txt`:
+Chỉnh sửa `/boot/firmware/config.txt`:
 
 ```bash
-sudo nano /boot/config.txt
+sudo nano /boot/firmware/config.txt
 ```
 
 Thêm các dòng sau:
@@ -153,8 +149,7 @@ Thêm các dòng sau:
 camera_auto_detect=0
 
 # Tắt standard V4L2 driver
-dtoverlay=vc4-kms-v3d,noaudio
-dtoverlay=vc4-fkms-v3d
+dtoverlay=vc4-kms-v3d
 
 # Bật custom driver
 dtoverlay=manual-unicam
@@ -199,15 +194,6 @@ dmesg | grep -i cma
 
 # Kết quả mong đợi:
 # Memory: xxxM/xxxM available, xxxM reserved, xxxM cma-reserved
-```
-
-### 2. Điều chỉnh GPU memory (tùy chọn)
-
-Trong `/boot/config.txt`:
-
-```ini
-# Tăng GPU memory nếu cần
-gpu_mem=256
 ```
 
 ### 3. Optimize performance
