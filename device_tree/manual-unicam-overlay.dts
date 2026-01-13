@@ -6,16 +6,12 @@
 // #include "dt-bindings/clock/bcm2835.h"
 
 / {
-	compatible = "brcm,bcm2711";
-	
-	/*
-	 * Fragment 0: Disable standard Unicam driver (CSI1)
-	 * This prevents resource conflicts with our custom driver
-	 */
-	fragment@0 {
+ compatible = "brcm,bcm2711";
+
+    fragment@0 {
 		target = <&csi1>;
 		__overlay__ {
-			status = "disabled";
+			status = "okay";
 		};
 	};
 	
@@ -83,7 +79,7 @@
 				clocks = <&clocks 29>,
 					 <&firmware_clocks 4>;
 				clock-names = "lp", "vpu";
-				
+				avdd-supply = <&cam1_reg>;
 				/*
 				 * I2C bus reference for sensor
 				 * Points to I2C bus connected to camera
@@ -170,7 +166,27 @@
 			bootargs = "cma=64M";
 		};
 	};
-	
+	/*
+	 * Fragment 8: Define fixed clock for camera XCLK
+	 * Many sensors require a specific external clock frequency
+	 */
+	fragment@8 {
+        target-path = "/";
+        __overlay__ {
+            cam1_clk: cam1_clk {
+                compatible = "fixed-clock";
+                #clock-cells = <0>;
+                clock-frequency = <24000000>;  // 24MHz for IMX219
+            };
+        };
+    };
+	fragmant@9 {
+		target = <&cam1_reg>;
+		__overlay__ {
+			xclk = <&cam1_clk>;
+			xclk-names = "xclk";
+		};
+	};
 	/*
 	 * Parameters that can be set when loading overlay
 	 * Example: dtoverlay=manual-unicam,buffer_size=32
