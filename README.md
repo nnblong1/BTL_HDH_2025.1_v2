@@ -57,9 +57,9 @@ uname -r
 # Kiểm tra camera được nhận diện
 vcgencmd get_camera
 
-# Kết quả mong đợi: supported=1 detected=1
+# Kết quả mong đợi: supported=1 detected=1 hoặc cả 2 = 0
 
-# Kiểm tra I2C
+# Kiểm tra I2C / có thể là sudo i2cdetect -y 22 
 sudo i2cdetect -y 10
 
 # Nên thấy địa chỉ 0x10 (IMX219)
@@ -100,65 +100,32 @@ touch Makefile
 ### 3. Biên dịch
 
 ```bash
-# Build tất cả
-make -C ~/linux ARCH=arm64 M=$PWD modules
+
+# trước khi make thì nên make clean để xóa bỏ những file thừa
+make clean
 
 # Output mong đợi:
 # - manual-unicam.ko (kernel module)
 # - manual-unicam.dtbo (device tree overlay)
+
+# biên dịch device tree
+cd device_tree
+dtc -@ -I dts -O dtb manual-unicam-overlay.dts -o manual-unicam.dtbo
+sudo cp manual-unicam.dtbo /boot/firmware/overlays
+cd ..
+
+# Build tất cả
+make
+
+#nạp driver
+sudo insmod manual-unicam-driver.ko
+#sau khi sử dụng xong hoặc nếu muồn nạp driver mới thì gỡ bỏ cái cũ trước
+sudo rmmod manual-unicam-driver.ko
 ```
-
-### 4. Kiểm tra module
-
-```bash
-# Xem thông tin module
-modinfo manual-unicam-driver.ko
-
-# Kết quả hiển thị:
-# - filename
-# - description
-# - author
-# - license
-# - depends
-```
-
 ---
 
 ## Cài đặt
 
-### 1. Cài đặt kernel module và overlay
-
-```bash
-# Sử dụng Makefile
-sudo make install
-
-```
-
-### 2. Cấu hình boot
-
-Chỉnh sửa `/boot/firmware/config.txt`:
-
-```bash
-sudo nano /boot/firmware/config.txt
-```
-
-Thêm các dòng sau:
-
-```ini
-# Tắt camera driver mặc định
-camera_auto_detect=0
-
-# Tắt standard V4L2 driver
-dtoverlay=vc4-kms-v3d
-
-# Bật custom driver
-dtoverlay=manual-unicam
-
-# Tăng CMA memory cho DMA
-cma=256M
-
-# Đảm bảo I2C được bật
-dtparam=i2c_arm=on
 ```
 
 ### 3. Tạo device permissions
@@ -175,13 +142,6 @@ Thêm nội dung:
 SUBSYSTEM=="unicam", MODE="0666"
 KERNEL=="unicam0", MODE="0666"
 ```
-
-### 4. Reboot hệ thống
-
-```bash
-sudo reboot
-```
-
 ---
 
 ## Cấu hình System
@@ -190,23 +150,11 @@ sudo reboot
 
 ```bash
 # Xem CMA available
-dmesg | grep -i cma
+dmesg | grep -n 50n
 
 # Kết quả mong đợi:
 # Memory: xxxM/xxxM available, xxxM reserved, xxxM cma-reserved
 ```
-
-### 3. Optimize performance
-
-```bash
-# Disable unnecessary services
-sudo systemctl disable bluetooth
-sudo systemctl disable hciuart
-
-# Tăng priority cho interrupt handler
-echo -1 | sudo tee /proc/sys/kernel/sched_rt_runtime_us
-```
-
 ---
 
 ## Kiểm tra và Debug
@@ -244,15 +192,6 @@ cat /proc/interrupts | grep unicam
 cat /proc/iomem | grep unicam
 ```
 
-### 4. Debug mode
-
-Để bật debug output, load module với parameter:
-
-```bash
-sudo rmmod manual-unicam
-sudo insmod manual-unicam.ko debug=1
-```
-
 ---
 
 ## Sử dụng Driver
@@ -282,66 +221,6 @@ sudo ./test_unicam -n 100 -s
 # Chỉ định device khác
 sudo ./test_unicam -d /dev/unicam0 -n 50
 ```
-
-### 3. Sử dụng từ Python
-
-```python
-#!/usr/bin/env python3
-import fcntl
-import mmap
-import struct
-import numpy as np
-
-# IOCTL commands
-UNICAM_IOC_START_STREAM = 0x00005501
-UNICAM_IOC_STOP_STREAM = 0x00005502
-UNICAM_IOC_GET_BUFFER = 0x80085503
-
-# Open device
-fd = open('/dev/unicam0', 'r+b', buffering=0)
-
-# Get buffer size
-buffer_size = struct.unpack('Q', fcntl.ioctl(fd, UNICAM_IOC_GET_BUFFER, 
-                                             struct.pack('Q', 0)))[0]
-print(f"Buffer size: {buffer_size} bytes")
-
-# Memory map
-mm = mmap.mmap(fd.fileno(), buffer_size, mmap.MAP_SHARED, 
-               mmap.PROT_READ | mmap.PROT_WRITE)
-
-# Start streaming
-fcntl.ioctl(fd, UNICAM_IOC_START_STREAM)
-
-try:
-    # Read frames
-    for i in range(100):
-        # Read frame info
-        frame_data = fd.read(8)
-        frame_count, write_ptr = struct.unpack('II', frame_data)
-        
-        # Calculate frame offset
-        frame_size = 640 * 480 * 2
-        offset = ((frame_count - 1) * frame_size) % buffer_size
-        
-        # Get frame from memory map
-        mm.seek(offset)
-        raw_data = mm.read(frame_size)
-        
-        # Convert to numpy array
-        frame = np.frombuffer(raw_data, dtype=np.uint16)
-        frame = frame.reshape((480, 640))
-        
-        print(f"Frame {i}: count={frame_count}, "
-              f"mean={frame.mean():.1f}")
-        
-finally:
-    # Stop streaming
-    fcntl.ioctl(fd, UNICAM_IOC_STOP_STREAM)
-    mm.close()
-    fd.close()
-```
-
----
 
 ## Xử lý Sự cố
 
